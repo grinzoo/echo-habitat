@@ -1,5 +1,4 @@
 import { BlobPreconditionFailedError, get, put } from "@vercel/blob";
-import { headers } from "next/headers";
 import type { HabitatStore, Snapshot } from "./storage-types";
 
 const path = "echo-habitat/world.json";
@@ -10,21 +9,14 @@ const options = {
   contentType: "application/json",
 };
 
-async function blobAuth() {
+function blobAuth(requestOidcToken?: string) {
   const token = process.env.BLOB_READ_WRITE_TOKEN?.trim();
   if (token) return { token };
 
   const storeId = process.env.BLOB_STORE_ID?.trim();
-  let oidcToken = process.env.VERCEL_OIDC_TOKEN?.trim();
-
-  if (!oidcToken) {
-    try {
-      oidcToken =
-        (await headers()).get("x-vercel-oidc-token")?.trim() || undefined;
-    } catch {
-      // Outside a Vercel request context, fall through to the diagnostic below.
-    }
-  }
+  const oidcToken =
+    requestOidcToken?.trim() ||
+    process.env.VERCEL_OIDC_TOKEN?.trim();
 
   if (oidcToken && storeId) return { oidcToken, storeId };
 
@@ -34,8 +26,8 @@ async function blobAuth() {
 }
 
 export const habitatStore: HabitatStore = {
-  async read() {
-    const auth = await blobAuth();
+  async read(oidcToken) {
+    const auth = blobAuth(oidcToken);
     const result = await get(path, {
       ...auth,
       access: "private",
@@ -68,9 +60,9 @@ export const habitatStore: HabitatStore = {
     } satisfies Snapshot;
   },
 
-  async initialize(world) {
+  async initialize(world, oidcToken) {
     try {
-      const auth = await blobAuth();
+      const auth = blobAuth(oidcToken);
       const blob = await put(
         path,
         JSON.stringify({ world, revision: 0 }),
@@ -82,17 +74,17 @@ export const habitatStore: HabitatStore = {
 
       return { world, revision: 0, etag: blob.etag };
     } catch (error) {
-      const winner = await habitatStore.read();
+      const winner = await habitatStore.read(oidcToken);
       if (winner) return winner;
       throw error;
     }
   },
 
-  async compareAndSwap(before, world): Promise<Snapshot | null> {
+  async compareAndSwap(before, world, oidcToken): Promise<Snapshot | null> {
     const revision = before.revision + 1;
 
     try {
-      const auth = await blobAuth();
+      const auth = blobAuth(oidcToken);
       const blob = await put(
         path,
         JSON.stringify({ world, revision }),
