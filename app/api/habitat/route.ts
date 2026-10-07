@@ -11,13 +11,22 @@ const actionSchema = z.discriminatedUnion("type", [
 const requestSchema = z.object({ actionRevision: z.number().int().nonnegative().safe(), action: actionSchema }).strict();
 const headers = { "Cache-Control": "no-store", Vary: "Cookie" };
 
+function oidcToken(request: Request) {
+  return request.headers.get("x-vercel-oidc-token")?.trim() || undefined;
+}
+
 export async function GET(request: Request) {
   try {
-    const result = await readHabitat();
+    const token = oidcToken(request);
+    const result = await readHabitat(Date.now(), undefined, token);
     const mode = await isOwner(request) ? "owner" : "visitor";
     return Response.json({ ...result, mode, access: accessOptions() }, { headers });
   } catch (error) {
-    console.error("Habitat read failed", error);
+    console.error("Habitat read failed", error, {
+      hasOidcHeader: Boolean(oidcToken(request)),
+      hasStoreId: Boolean(process.env.BLOB_STORE_ID),
+      hasReadWriteToken: Boolean(process.env.BLOB_READ_WRITE_TOKEN),
+    });
     return Response.json({ error: "The habitat could not be loaded. Please try again." }, { status: 503, headers });
   }
 }
@@ -37,13 +46,17 @@ export async function POST(request: Request) {
   catch { return Response.json({ error: "Invalid action." }, { status: 400, headers }); }
   if (!parsed.success) return Response.json({ error: "Invalid action." }, { status: 400, headers });
   try {
-    const result = await updateHabitat(parsed.data.action, parsed.data.actionRevision);
+    const result = await updateHabitat(parsed.data.action, parsed.data.actionRevision, Date.now(), oidcToken(request));
     return Response.json({ ...result, mode: "owner", access: accessOptions() }, { status: result.conflict ? 409 : 200, headers });
   } catch (error) {
     if (error instanceof Error && (error.message.startsWith("Wait for") || error.message.startsWith("The habitat is catching up"))) {
       return Response.json({ error: error.message }, { status: 422, headers });
     }
-    console.error("Habitat save failed", error);
+    console.error("Habitat save failed", error, {
+      hasOidcHeader: Boolean(oidcToken(request)),
+      hasStoreId: Boolean(process.env.BLOB_STORE_ID),
+      hasReadWriteToken: Boolean(process.env.BLOB_READ_WRITE_TOKEN),
+    });
     return Response.json({ error: "Your change could not be confirmed. Reconnect to see the saved state before trying again." }, { status: 503, headers });
   }
 }
