@@ -9,9 +9,15 @@ export async function GET(request: Request) {
     return Response.json({ error: "Unauthorized." }, { status: 401, headers: { "Cache-Control": "no-store" } });
   }
   try {
-    const result = await readHabitat(Date.now(), 60000);
+    const token = request.headers.get("x-vercel-oidc-token")?.trim() || undefined;
+    const result = await readHabitat(Date.now(), 60000, token);
     return Response.json({ tick: result.world.tick, pendingSteps: result.pendingSteps }, { headers: { "Cache-Control": "no-store" } });
-  } catch {
+  } catch (error) {
+    console.error("Habitat cron failed", error, {
+      hasOidcHeader: Boolean(request.headers.get("x-vercel-oidc-token")),
+      hasStoreId: Boolean(process.env.BLOB_STORE_ID),
+      hasReadWriteToken: Boolean(process.env.BLOB_READ_WRITE_TOKEN),
+    });
     return Response.json({ error: "The habitat could not be synchronized." }, { status: 503 });
   }
 }
