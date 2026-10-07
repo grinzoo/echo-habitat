@@ -1,4 +1,5 @@
 import { BlobPreconditionFailedError, get, put } from "@vercel/blob";
+import { headers } from "next/headers";
 import type { HabitatStore, Snapshot } from "./storage-types";
 
 const path = "echo-habitat/world.json";
@@ -9,15 +10,40 @@ const options = {
   contentType: "application/json",
 };
 
+async function blobAuth() {
+  const token = process.env.BLOB_READ_WRITE_TOKEN?.trim();
+  if (token) return { token };
+
+  const storeId = process.env.BLOB_STORE_ID?.trim();
+  let oidcToken = process.env.VERCEL_OIDC_TOKEN?.trim();
+
+  if (!oidcToken) {
+    try {
+      oidcToken =
+        (await headers()).get("x-vercel-oidc-token")?.trim() || undefined;
+    } catch {
+      // Outside a Vercel request context, fall through to the diagnostic below.
+    }
+  }
+
+  if (oidcToken && storeId) return { oidcToken, storeId };
+
+  throw new Error(
+    `Vercel Blob credentials unavailable (storeId=${Boolean(storeId)}, oidc=${Boolean(oidcToken)}, readWriteToken=${Boolean(token)}).`,
+  );
+}
+
 export const habitatStore: HabitatStore = {
   async read() {
-const result = await get(path, {
-  access: "private",
-  useCache: false,
-  headers: {
-    "Accept-Encoding": "identity",
-  },
-});
+    const auth = await blobAuth();
+    const result = await get(path, {
+      ...auth,
+      access: "private",
+      useCache: false,
+      headers: {
+        "Accept-Encoding": "identity",
+      },
+    });
 
     if (!result) return null;
 
@@ -44,10 +70,14 @@ const result = await get(path, {
 
   async initialize(world) {
     try {
+      const auth = await blobAuth();
       const blob = await put(
         path,
         JSON.stringify({ world, revision: 0 }),
-        options,
+        {
+          ...options,
+          ...auth,
+        },
       );
 
       return { world, revision: 0, etag: blob.etag };
@@ -62,11 +92,13 @@ const result = await get(path, {
     const revision = before.revision + 1;
 
     try {
+      const auth = await blobAuth();
       const blob = await put(
         path,
         JSON.stringify({ world, revision }),
         {
           ...options,
+          ...auth,
           allowOverwrite: true,
           ifMatch: before.etag,
         },
