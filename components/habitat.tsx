@@ -29,6 +29,44 @@ function Entry({ entry, compact = false }: { entry: ChronicleEntry; compact?: bo
     <div className="log-copy"><div className="log-meta"><span>{profile?.name ?? "Habitat"}</span><time>Day {time.day} · {time.time}</time></div><h3>{entry.title}</h3>{!compact && <p>{entry.text}</p>}</div>
   </article>;
 }
+
+function ConversationCard({ entry, loaded, onSelect }: {
+  entry: ChronicleEntry | null;
+  loaded: boolean;
+  onSelect: (id: ResidentId) => void;
+}) {
+  const time = entry ? worldTime(entry.tick) : null;
+  const speakers = entry
+    ? RESIDENT_IDS.filter(id => entry.text.includes(`${PROFILES[id].name}: “`))
+    : [];
+  return <section className="world-panel" aria-labelledby="conversation-heading">
+    <div style={{ padding: "18px 20px" }}>
+      <div className="section-label" style={{ flexWrap: "wrap" }}>
+        <h2 id="conversation-heading">Around the habitat</h2>
+        {time && <time style={{ fontSize: 12, color: "var(--muted-foreground)" }}>Day {time.day} · {time.time}</time>}
+      </div>
+      {entry && <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+        {speakers.map(id => <button
+          key={id}
+          type="button"
+          className="read-only-chip"
+          style={{ color: PROFILES[id].color, minHeight: 44 }}
+          onClick={() => onSelect(id)}
+          aria-label={`View ${PROFILES[id].name}'s profile`}
+        ><Glyph id={id} size={16}/>{PROFILES[id].name}<ArrowUpRight size={14}/></button>)}
+      </div>}
+      <div aria-live="polite" aria-atomic="true" style={{ overflowWrap: "anywhere" }}>
+        {entry ? entry.text.split(" — ").map((line, index) =>
+          <p key={index} style={{ margin: "8px 0", lineHeight: 1.7 }}>{line}</p>
+        ) : <p className="retention-note" style={{ marginBottom: 0 }}>
+          {loaded ? "A quiet moment for now. Their next conversation will appear here." : "Listening for life in the habitat…"}
+        </p>}
+      </div>
+      {entry && <p className="retention-note" style={{ marginBottom: 0 }}>Their latest conversation · Select a name to look closer.</p>}
+    </div>
+  </section>;
+}
+
 function ResidentCard({ resident, selected, onSelect }: { resident: Resident; selected: boolean; onSelect: () => void }) {
   const profile = PROFILES[resident.id];
   return <button className={`resident-card ${selected ? "selected" : ""}`} onClick={onSelect} aria-pressed={selected} style={{ "--resident": profile.color } as CSSProperties}>
@@ -51,6 +89,8 @@ type ModelContext = { registerTool: (tool: Tool, options: { signal: AbortSignal 
 export default function Habitat({ visitorMode: forceVisitor = false }: { visitorMode?: boolean }) {
   const [data, setData] = useState<WorldResponse>(() => ({ world: createWorld(), revision: 0 }));
   const [selected, setSelected] = useState<ResidentId>("moss");
+  const [conversation, setConversation] = useState<{ epoch: number; entry: ChronicleEntry | null } | null>(null);
+  const focusPanel = useRef<HTMLElement>(null);
   const [loaded, setLoaded] = useState(false), [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [offlineSummary, setOfflineSummary] = useState<OfflineSummary | null>(null);
@@ -71,6 +111,20 @@ export default function Habitat({ visitorMode: forceVisitor = false }: { visitor
   const accept = useCallback((next: WorldResponse) => {
     if (!active.current || (loadedRef.current && next.revision < dataRef.current.revision)) return;
     dataRef.current = next; setData(next); setLoaded(true); loadedRef.current = true;
+    const latest = next.world.chronicle.find(entry =>
+      entry.kind === "encounter" && entry.title.endsWith(", a small conversation")
+    ) ?? null;
+    setConversation(previous => {
+      // A new world must not retain conversations from the previous one.
+      if (!previous || previous.epoch !== next.world.epoch) {
+        return { epoch: next.world.epoch, entry: latest };
+      }
+      if (latest && (!previous.entry || latest.tick >= previous.entry.tick)) {
+        return previous.entry?.id === latest.id ? previous : { epoch: next.world.epoch, entry: latest };
+      }
+      // Keep the conversation readable while newer events fill the chronicle.
+      return previous;
+    });
     if (previousVisit.current) {
       const summary = summarizeVisit(previousVisit.current, next.world, Date.now());
       if (summary) setOfflineSummary(summary);
@@ -205,13 +259,22 @@ export default function Habitat({ visitorMode: forceVisitor = false }: { visitor
             <div className="world-metrics"><div><Leaf size={16}/><span>Growth</span><strong>{world.growth}<small>%</small></strong></div><div><Zap size={16}/><span>Power</span><strong>{world.power}<small>%</small></strong></div><div><Sparkles size={16}/><span>Discoveries</span><strong>{String(world.discoveries).padStart(2,"0")}</strong></div><div className="metrics-cycle">CYCLE <strong>{String(world.tick).padStart(3,"0")}</strong></div></div>
           </div>
 
+          <ConversationCard
+            entry={conversation?.epoch === world.epoch ? conversation.entry : null}
+            loaded={loaded}
+            onSelect={id => {
+              setSelected(id);
+              focusPanel.current?.scrollIntoView({ block: "start" });
+              focusPanel.current?.focus({ preventScroll: true });
+            }}
+          />
           <ConstructionBoard world={world}/>
           <section className="residents-section" aria-labelledby="resident-heading"><div className="section-label"><h2 id="resident-heading">The residents <span>03</span></h2><span>Every one a little different</span></div><div className="resident-grid">{world.residents.map(item => <ResidentCard key={item.id} resident={item} selected={item.id === selected} onSelect={() => setSelected(item.id)}/>)}</div></section>
 
           {visitorMode ? <section className="visitor-observe-card"><Lock size={19}/><div><strong>Owner controls are hidden here.</strong><p>The visitor link can follow movement, councils, construction, memories and new districts without sending simulation actions.</p></div></section> : <section className="interventions" aria-labelledby="event-heading"><div className="section-label"><h2 id="event-heading">A gentle nudge</h2><span>{remaining ? `${remaining} steps until this event settles` : "Change something. See what follows."}</span></div><div className="event-grid">{([{ id:"rain", icon:CloudRain, text:"Let something grow" },{ id:"relic", icon:Sparkles, text:"Give curiosity a reason" },{ id:"blackout", icon:ZapOff, text:"See who comes together" }] as const).map(event => <button key={event.id} className={`event-button ${world.intervention?.kind === event.id ? "event-active" : ""}`} onClick={() => invoke({ type:"event", event:event.id })} disabled={!loaded || busy || catchingUp || !!world.intervention}><event.icon size={21} strokeWidth={1.4}/><span><strong>{EVENT_LABELS[event.id]}</strong><small>{world.intervention?.kind === event.id ? "The habitat is responding…" : event.text}</small></span><ArrowUpRight size={14}/></button>)}</div></section>}
         </section>
 
-        <aside className="focus-panel" style={{ "--resident": profile.color } as CSSProperties} aria-label={`${profile.name}'s profile`}>
+        <aside ref={focusPanel} tabIndex={-1} className="focus-panel" style={{ "--resident": profile.color } as CSSProperties} aria-label={`${profile.name}'s profile`}>
           <div className="focus-top"><span className="eyebrow">IN FOCUS</span><span className="profile-number">0{RESIDENT_IDS.indexOf(selected)+1} / 03</span></div>
           <div className="profile-identity"><Avatar id={selected} large/><div><h2>{profile.name}</h2><span>{profile.role}</span></div><span className="profile-mood">{moodLabel(resident.mood)}</span></div>
           <p className="profile-description">{profile.description}</p>
