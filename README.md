@@ -7,6 +7,10 @@ https://github.com/user-attachments/assets/184496da-bf1b-4505-ad4a-e3d22fe10dc9
 
 [Explore the live habitat →](https://echo-habitat-1l97.vercel.app/?mode=visitor)
 
+## Contract Address
+
+**Solana / Pump.fun:** `7uGtbXSB8BoM4NinhNTUUGQAq69QgqeuULrueRrxpump`
+
 ECHO HABITAT is a persistent life simulation about three digital residents building a world together.
 
 Watch Moss, Lux and Echo gather resources, choose their next project, help each other through unexpected events, and expand from their first habitat into a living archipelago.
